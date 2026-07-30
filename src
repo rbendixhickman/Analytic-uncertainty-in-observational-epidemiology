@@ -1,0 +1,1393 @@
+library("nhanesA")
+library("dplyr")
+library("ggplot2")
+library("readr")
+library("tidyverse")
+library("survival")
+library("Hmisc")
+library("specr")
+library("gtools")
+library("purrr")
+library("broom")
+library("stringr")
+library("tidyr")
+library("patchwork")
+library("ggrepel")
+
+#####DATA PREPARATION#####
+
+#demographic data
+demoD = nhanes("DEMO_D")
+demoE = nhanes("DEMO_E")
+demoF = nhanes("DEMO_F")
+
+#keep relevant
+demo_D = subset(demoD, select = c(SEQN,WTMEC2YR, SDMVPSU, SDMVSTRA, RIAGENDR,RIDAGEYR,RIDRETH1,DMDEDUC2,DMDMARTL,RIDEXPRG,INDFMPIR))
+demo_E = subset(demoE, select = c(SEQN,WTMEC2YR, SDMVPSU, SDMVSTRA, RIAGENDR,RIDAGEYR,RIDRETH1,DMDEDUC2,DMDMARTL,RIDEXPRG,INDFMPIR))
+demo_F = subset(demoF, select = c(SEQN,WTMEC2YR, SDMVPSU, SDMVSTRA, RIAGENDR,RIDAGEYR,RIDRETH1,DMDEDUC2,DMDMARTL,RIDEXPRG,INDFMPIR))
+
+#recode refused and don't know as missing
+demo_D$DMDEDUC2[demo_D$DMDEDUC2=="Refused"]<-NA
+demo_D$DMDEDUC2[demo_D$DMDEDUC2=="Don't Know"]<-NA
+demo_D$DMDMARTL[demo_D$DMDMARTL=="Refused"]<-NA
+demo_D$DMDMARTL[demo_D$DMDMARTL=="Don't know"]<-NA
+demo_D$RIDEXPRG[demo_D$RIDEXPRG=="Cannot ascertain if SP is pregnant at exam"]<-NA
+
+demo_E$DMDEDUC2[demo_E$DMDEDUC2=="Refused"]<-NA
+demo_E$DMDEDUC2[demo_E$DMDEDUC2=="Don't Know"]<-NA
+demo_E$DMDMARTL[demo_E$DMDMARTL=="Refused"]<-NA
+demo_E$DMDMARTL[demo_E$DMDMARTL=="Don't know"]<-NA
+demo_E$RIDEXPRG[demo_E$RIDEXPRG=="Cannot ascertain if SP is pregnant at exam"]<-NA
+
+demo_F$DMDEDUC2[demo_F$DMDEDUC2=="Refused"]<-NA
+demo_F$DMDEDUC2[demo_F$DMDEDUC2=="Don't Know"]<-NA
+demo_F$DMDMARTL[demo_F$DMDMARTL=="Refused"]<-NA
+demo_F$DMDMARTL[demo_F$DMDMARTL=="Don't know"]<-NA
+demo_F$RIDEXPRG[demo_F$RIDEXPRG=="Cannot ascertain if SP is pregnant at exam"]<-NA
+
+#CRP (note not collected 2011/12 and 2012/13)
+CRPD = nhanes("CRP_D")
+CRPE = nhanes("CRP_E")
+CRPF = nhanes("CRP_F")
+
+#complete blood count
+CBCD = nhanes("CBC_D")
+CBCE = nhanes("CBC_E")
+CBCF = nhanes("CBC_F")
+
+#keep relevant variables
+CBC_D = subset(CBCD, select = c(SEQN, LBXHGB, LBDLYMNO, LBDMONO, LBDNENO))
+CBC_E = subset(CBCE, select = c(SEQN, LBXHGB, LBDLYMNO, LBDMONO, LBDNENO))
+CBC_F = subset(CBCF, select = c(SEQN, LBXHGB, LBDLYMNO, LBDMONO, LBDNENO))
+
+p99DL <- quantile(CBC_D$LBDLYMNO, 0.99, na.rm = TRUE)
+p99DN <- quantile(CBC_D$LBDNENO, 0.99, na.rm = TRUE)
+p99EL <- quantile(CBC_E$LBDLYMNO, 0.99, na.rm = TRUE)
+p99EN <- quantile(CBC_E$LBDNENO, 0.99, na.rm = TRUE)
+p99FL <- quantile(CBC_F$LBDLYMNO, 0.99, na.rm = TRUE)
+p99FN <- quantile(CBC_F$LBDNENO, 0.99, na.rm = TRUE)
+
+CBC_D <- CBC_D[CBC_D$LBDLYMNO <= p99DL, ]
+CBC_D <- CBC_D[CBC_D$LBDNENO <= p99DN, ]
+CBC_E <- CBC_E[CBC_E$LBDLYMNO <= p99EL, ]
+CBC_E <- CBC_E[CBC_E$LBDNENO <= p99EN, ]
+CBC_F <- CBC_F[CBC_F$LBDLYMNO <= p99FL, ]
+CBC_F <- CBC_F[CBC_F$LBDNENO <= p99FN, ]
+
+#body measures including BMI, height, waist circumference
+BMXD = nhanes("BMX_D")
+BMXE = nhanes("BMX_E")
+BMXF = nhanes("BMX_F")
+
+#keep relevant variables
+BMX_D = subset(BMXD, select = c(SEQN, BMXWT, BMXHT, BMXBMI, BMXWAIST))
+BMX_E = subset(BMXE, select = c(SEQN, BMXWT, BMXHT, BMXBMI, BMXWAIST))
+BMX_F = subset(BMXF, select = c(SEQN, BMXWT, BMXHT, BMXBMI, BMXWAIST))
+
+p99DB <- quantile(BMX_D$BMXBMI, 0.99, na.rm = TRUE)
+p99EB <- quantile(BMX_E$BMXBMI, 0.99, na.rm = TRUE)
+p99FB <- quantile(BMX_F$BMXBMI, 0.99, na.rm = TRUE)
+
+BMX_D <- BMX_D[BMX_D$BMXBMI <= p99DB, ]
+BMX_E <- BMX_E[BMX_E$BMXBMI <= p99EB, ]
+BMX_F <- BMX_F[BMX_F$BMXBMI <= p99FB, ]
+
+#alcohol use
+ALQD = nhanes("ALQ_D")
+ALQE = nhanes("ALQ_E")
+ALQF = nhanes("ALQ_F")
+
+#keep relevant variables
+ALQ_D = subset(ALQD, select = c(SEQN, ALQ101, ALQ120Q))
+ALQ_E = subset(ALQE, select = c(SEQN, ALQ101, ALQ120Q))
+ALQ_F = subset(ALQF, select = c(SEQN, ALQ101, ALQ120Q))
+
+#treat refused and don't know as missing
+ALQ_D$ALQ101[ALQ_D$ALQ101=="Refused"]<-NA
+ALQ_D$ALQ101[ALQ_D$ALQ101=="Don't know"]<-NA
+ALQ_D$ALQ130[ALQ_D$ALQ120Q=="Refused"]<-NA
+ALQ_D$ALQ130[ALQ_D$ALQ120Q=="Don't know"]<-NA
+
+ALQ_E$ALQ101[ALQ_E$ALQ101=="Refused"]<-NA
+ALQ_E$ALQ101[ALQ_E$ALQ101=="Don't know"]<-NA
+ALQ_E$ALQ130[ALQ_E$ALQ120Q=="Refused"]<-NA
+ALQ_E$ALQ130[ALQ_E$ALQ120Q=="Don't know"]<-NA
+
+ALQ_F$ALQ101[ALQ_F$ALQ101=="Refused"]<-NA
+ALQ_F$ALQ101[ALQ_F$ALQ101=="Don't know"]<-NA
+ALQ_F$ALQ130[ALQ_F$ALQ120Q=="Refused"]<-NA
+ALQ_F$ALQ130[ALQ_F$ALQ120Q=="Don't know"]<-NA
+
+#smoking/tobacco use (note 20+ years only)
+SMQD = nhanes("SMQ_D")
+SMQE = nhanes("SMQ_E")
+SMQF = nhanes("SMQ_F")
+
+#keep relevant variables
+SMQ_D = subset(SMQD, select = c(SEQN, SMQ020, SMQ040))
+SMQ_E = subset(SMQE, select = c(SEQN, SMQ020, SMQ040))
+SMQ_F = subset(SMQF, select = c(SEQN, SMQ020, SMQ040))
+
+#treat refused and don't know as missing
+SMQ_D$SMQ020[SMQ_D$SMQ020=="Refused"]<-NA
+SMQ_D$SMQ020[SMQ_D$SMQ020=="Don't know"]<-NA
+SMQ_D$SMQ040[SMQ_D$SMQ040=="Refused"]<-NA
+SMQ_D$SMQ040[SMQ_D$SMQ040=="Don't know"]<-NA
+
+SMQ_E$SMQ020[SMQ_E$SMQ020=="Refused"]<-NA
+SMQ_E$SMQ020[SMQ_E$SMQ020=="Don't know"]<-NA
+SMQ_E$SMQ040[SMQ_E$SMQ040=="Refused"]<-NA
+SMQ_E$SMQ040[SMQ_E$SMQ040=="Don't know"]<-NA
+
+SMQ_F$SMQ020[SMQ_F$SMQ020=="Refused"]<-NA
+SMQ_F$SMQ020[SMQ_F$SMQ020=="Don't know"]<-NA
+SMQ_F$SMQ040[SMQ_F$SMQ040=="Refused"]<-NA
+SMQ_F$SMQ040[SMQ_F$SMQ040=="Don't know"]<-NA
+
+#interview questions re blood pressure/cholesterol
+BPQD = nhanes("BPQ_D")
+BPQE = nhanes("BPQ_E")
+BPQF = nhanes("BPQ_F")
+
+#keep relevant variables
+BPQ_D = subset(BPQD, select = c(SEQN, BPQ020, BPQ040A, BPQ080, BPQ090D))
+BPQ_E = subset(BPQE, select = c(SEQN, BPQ020, BPQ040A, BPQ080, BPQ090D))
+BPQ_F = subset(BPQF, select = c(SEQN, BPQ020, BPQ040A, BPQ080, BPQ090D))
+
+#treat refused and don't know as missing
+BPQ_D$BPQ020[BPQ_D$BPQ020=="Refused"]<-NA
+BPQ_D$BPQ020[BPQ_D$BPQ020=="Don't know"]<-NA
+BPQ_D$BPQ040A[BPQ_D$BPQ040A=="Refused"]<-NA
+BPQ_D$BPQ040A[BPQ_D$BPQ040A=="Don't know"]<-NA
+BPQ_D$BPQ080[BPQ_D$BPQ080=="Refused"]<-NA
+BPQ_D$BPQ080[BPQ_D$BPQ080=="Don't know"]<-NA
+BPQ_D$BPQ090D[BPQ_D$BPQ090D=="Refused"]<-NA
+BPQ_D$BPQ090D[BPQ_D$BPQ090D=="Don't know"]<-NA
+
+BPQ_E$BPQ020[BPQ_E$BPQ020=="Refused"]<-NA
+BPQ_E$BPQ020[BPQ_E$BPQ020=="Don't know"]<-NA
+BPQ_E$BPQ040A[BPQ_E$BPQ040A=="Refused"]<-NA
+BPQ_E$BPQ040A[BPQ_E$BPQ040A=="Don't know"]<-NA
+BPQ_E$BPQ080[BPQ_E$BPQ080=="Refused"]<-NA
+BPQ_E$BPQ080[BPQ_E$BPQ080=="Don't know"]<-NA
+BPQ_E$BPQ090D[BPQ_E$BPQ090D=="Refused"]<-NA
+BPQ_E$BPQ090D[BPQ_E$BPQ090D=="Don't know"]<-NA
+
+BPQ_F$BPQ020[BPQ_F$BPQ020=="Refused"]<-NA
+BPQ_F$BPQ020[BPQ_F$BPQ020=="Don't know"]<-NA
+BPQ_F$BPQ040A[BPQ_F$BPQ040A=="Refused"]<-NA
+BPQ_F$BPQ040A[BPQ_F$BPQ040A=="Don't know"]<-NA
+BPQ_F$BPQ080[BPQ_F$BPQ080=="Refused"]<-NA
+BPQ_F$BPQ080[BPQ_F$BPQ080=="Don't know"]<-NA
+BPQ_F$BPQ090D[BPQ_F$BPQ090D=="Refused"]<-NA
+BPQ_F$BPQ090D[BPQ_F$BPQ090D=="Don't know"]<-NA
+
+#measured BP
+BPXD = nhanes("BPX_D")
+BPXE = nhanes("BPX_E")
+BPXF = nhanes("BPX_F")
+
+#keep relevant variables
+BPX_D = subset(BPXD, select = c(SEQN, BPXSY3, BPXDI3))
+BPX_E = subset(BPXE, select = c(SEQN, BPXSY3, BPXDI3))
+BPX_F = subset(BPXF, select = c(SEQN, BPXSY3, BPXDI3))
+
+#physical activity
+PAQD = nhanes("PAQ_D")
+PAQE = nhanes("PAQ_E")
+PAQF = nhanes("PAQ_F")
+
+#keep relevant variables (vigorous recreational activities)
+PAQ_D = subset(PAQD, select = c(SEQN, PAD200))
+PAQ_E = subset(PAQE, select = c(SEQN, PAQ650))
+PAQ_F = subset(PAQF, select = c(SEQN, PAQ650))
+
+#treat refused and don't know as missing; treat 'Unable to do activity' as 'No'
+names(PAQ_D)[names(PAQ_D) == "PAD200"] <- "PAQ650"
+PAQ_D$PAQ650[PAQ_D$PAQ650=="Unable to do activity"]<-"No"
+PAQ_D$PAQ650[PAQ_D$PAQ650=="Refused"]<-NA
+PAQ_D$PAQ650[PAQ_D$PAQ650=="Don't know"]<-NA
+
+PAQ_E$PAQ650[PAQ_E$PAQ650=="Refused"]<-NA
+PAQ_E$PAQ650[PAQ_E$PAQ650=="Don't know"]<-NA
+
+PAQ_F$PAQ650[PAQ_F$PAQ650=="Refused"]<-NA
+PAQ_F$PAQ650[PAQ_F$PAQ650=="Don't know"]<-NA
+
+#spirometry
+SPXE = nhanes("SPX_E")
+SPXF = nhanes("SPX_F")
+
+#keep relevant variables
+SPX_E = subset(SPXE, select = c(SEQN, SPXNFEV1))
+SPX_F = subset(SPXF, select = c(SEQN, SPXNFEV1))
+
+#LDL and triglycerides
+TRIGLYD = nhanes("TRIGLY_D")
+TRIGLYE = nhanes("TRIGLY_E")
+TRIGLYF = nhanes("TRIGLY_F")
+
+#keep relevant variables
+TRIGLY_D = subset(TRIGLYD, select = c(SEQN, LBXTR, LBDLDL))
+TRIGLY_E = subset(TRIGLYE, select = c(SEQN, LBXTR, LBDLDL))
+TRIGLY_F = subset(TRIGLYF, select = c(SEQN, LBXTR, LBDLDL))
+
+#HDL cholesterol
+HDLD = nhanes("HDL_D")
+HDLE = nhanes("HDL_E")
+HDLF = nhanes("HDL_F")
+
+#keep relevant variables
+HDL_D = subset(HDLD, select = c(SEQN, LBDHDD))
+HDL_E = subset(HDLE, select = c(SEQN, LBDHDD))
+HDL_F = subset(HDLF, select = c(SEQN, LBDHDD))
+
+#fasting glucose
+GLUD = nhanes("GLU_D")
+GLUE = nhanes("GLU_E")
+GLUF = nhanes("GLU_F")
+
+#keep relevant variables
+GLU_D = subset(GLUD, select = c(SEQN, LBXGLU, LBXIN))
+GLU_E = subset(GLUE, select = c(SEQN, LBXGLU, LBXIN))
+GLU_F = subset(GLUF, select = c(SEQN, LBXGLU, LBXIN))
+
+p99DG <- quantile(GLU_D$LBXGLU, 0.99, na.rm = TRUE)
+p99EG <- quantile(GLU_E$LBXGLU, 0.99, na.rm = TRUE)
+p99FG <- quantile(GLU_F$LBXGLU, 0.99, na.rm = TRUE)
+
+GLU_D <- GLU_D[GLU_D$LBXGLU <= p99DG, ]
+GLU_E <- GLU_E[GLU_E$LBXGLU <= p99EG, ]
+GLU_F <- GLU_F[GLU_F$LBXGLU <= p99FG, ]
+
+p99DI <- quantile(GLU_D$LBXIN, 0.99, na.rm = TRUE)
+p99EI <- quantile(GLU_E$LBXIN, 0.99, na.rm = TRUE)
+p99FI <- quantile(GLU_F$LBXIN, 0.99, na.rm = TRUE)
+
+GLU_D <- GLU_D[GLU_D$LBXIN <= p99DI, ]
+GLU_E <- GLU_E[GLU_E$LBXIN <= p99EI, ]
+GLU_F <- GLU_F[GLU_F$LBXIN <= p99FI, ]
+
+#total cholesterol
+TCHOLD = nhanes("TCHOL_D")
+TCHOLE = nhanes("TCHOL_E")
+TCHOLF = nhanes("TCHOL_F")
+
+#keep relevant variables
+TCHOL_D = subset(TCHOLD, select = c(SEQN, LBXTC))
+TCHOL_E = subset(TCHOLE, select = c(SEQN, LBXTC))
+TCHOL_F = subset(TCHOLF, select = c(SEQN, LBXTC))
+
+#diabetes
+DIQD = nhanes("DIQ_D")
+DIQE = nhanes("DIQ_E")
+DIQF = nhanes("DIQ_F")
+
+#keep relevant variables
+DIQ_D = subset(DIQD, select = c(SEQN, DIQ010, DIQ050, DID070))
+DIQ_E = subset(DIQE, select = c(SEQN, DIQ010, DIQ050, DID070))
+DIQ_F = subset(DIQF, select = c(SEQN, DIQ010, DIQ050, DIQ070))
+
+#treat borderline, refused and don't know as missing
+names(DIQ_D)[names(DIQ_D) == "DID070"] <- "DIQ070"
+names(DIQ_E)[names(DIQ_E) == "DID070"] <- "DIQ070"
+DIQ_D$DIQ010[DIQ_D$DIQ010=="Borderline"]<-NA
+DIQ_D$DIQ010[DIQ_D$DIQ010=="Refused"]<-NA
+DIQ_D$DIQ010[DIQ_D$DIQ010=="Don't know"]<-NA
+DIQ_D$DIQ050[DIQ_D$DIQ050=="Refused"]<-NA
+DIQ_D$DIQ050[DIQ_D$DIQ050=="Don't know"]<-NA
+DIQ_D$DIQ070[DIQ_D$DIQ070=="Refused"]<-NA
+DIQ_D$DIQ070[DIQ_D$DIQ070=="Don't know"]<-NA
+
+DIQ_E$DIQ010[DIQ_E$DIQ010=="Borderline"]<-NA
+DIQ_E$DIQ010[DIQ_E$DIQ010=="Refused"]<-NA
+DIQ_E$DIQ010[DIQ_E$DIQ010=="Don't know"]<-NA
+DIQ_E$DIQ050[DIQ_E$DIQ050=="Refused"]<-NA
+DIQ_E$DIQ050[DIQ_E$DIQ050=="Don't know"]<-NA
+DIQ_E$DIQ070[DIQ_E$DIQ070=="Refused"]<-NA
+DIQ_E$DIQ070[DIQ_E$DIQ070=="Don't know"]<-NA
+
+DIQ_F$DIQ010[DIQ_F$DIQ010=="Borderline"]<-NA
+DIQ_F$DIQ010[DIQ_F$DIQ010=="Refused"]<-NA
+DIQ_F$DIQ010[DIQ_F$DIQ010=="Don't know"]<-NA
+DIQ_F$DIQ050[DIQ_F$DIQ050=="Refused"]<-NA
+DIQ_F$DIQ050[DIQ_F$DIQ050=="Don't know"]<-NA
+DIQ_F$DIQ070[DIQ_F$DIQ070=="Refused"]<-NA
+DIQ_F$DIQ070[DIQ_F$DIQ070=="Don't know"]<-NA
+
+#menopause and HRT
+RHQD = nhanes("RHQ_D")
+RHQE = nhanes("RHQ_E")
+RHQF = nhanes("RHQ_F")
+
+#keep relevant variables (estrogen or combination HRT only)
+RHQ_D = subset(RHQD, select = c(SEQN, RHQ031, RHD042, RHQ558, RHQ574, RHQ584, RHQ600))
+RHQ_E = subset(RHQE, select = c(SEQN, RHQ031, RHD042, RHQ558, RHQ574, RHQ584, RHQ600))
+RHQ_F = subset(RHQF, select = c(SEQN, RHQ031, RHD042, RHQ558, RHQ574, RHQ584, RHQ600))
+
+#treat refused and don't know as missing
+RHQ_D$RHQ031[RHQ_D$RHQ031=="Refused"]<-NA
+RHQ_D$RHQ031[RHQ_D$RHQ031=="Don't know"]<-NA
+RHQ_E$RHQ031[RHQ_E$RHQ031=="Refused"]<-NA
+RHQ_E$RHQ031[RHQ_E$RHQ031=="Don't know"]<-NA
+RHQ_F$RHQ031[RHQ_F$RHQ031=="Refused"]<-NA
+RHQ_F$RHQ031[RHQ_F$RHQ031=="Don't know"]<-NA
+
+RHQ_D$RHD042[RHQ_D$RHD042=="Refused"]<-NA
+RHQ_D$RHD042[RHQ_D$RHD042=="Don't know"]<-NA
+RHQ_E$RHD042[RHQ_E$RHD042=="Refused"]<-NA
+RHQ_E$RHD042[RHQ_E$RHD042=="Don't know"]<-NA
+RHQ_F$RHD042[RHQ_F$RHD042=="Refused"]<-NA
+RHQ_F$RHD042[RHQ_F$RHD042=="Don't know"]<-NA
+
+RHQ_D$RHQ558[RHQ_D$RHQ558=="Refused"]<-NA
+RHQ_D$RHQ558[RHQ_D$RHQ558=="Don't know"]<-NA
+RHQ_E$RHQ558[RHQ_E$RHQ558=="Refused"]<-NA
+RHQ_E$RHQ558[RHQ_E$RHQ558=="Don't know"]<-NA
+RHQ_F$RHQ558[RHQ_F$RHQ558=="Refused"]<-NA
+RHQ_F$RHQ558[RHQ_F$RHQ558=="Don't know"]<-NA
+
+RHQ_D$RHQ574[RHQ_D$RHQ574=="Refused"]<-NA
+RHQ_D$RHQ574[RHQ_D$RHQ574=="Don't know"]<-NA
+RHQ_E$RHQ574[RHQ_E$RHQ574=="Refused"]<-NA
+RHQ_E$RHQ574[RHQ_E$RHQ574=="Don't know"]<-NA
+RHQ_F$RHQ574[RHQ_F$RHQ574=="Refused"]<-NA
+RHQ_F$RHQ574[RHQ_F$RHQ574=="Don't know"]<-NA
+
+RHQ_D$RHQ584[RHQ_D$RHQ584=="Refused"]<-NA
+RHQ_D$RHQ584[RHQ_D$RHQ584=="Don't know"]<-NA
+RHQ_E$RHQ584[RHQ_E$RHQ584=="Refused"]<-NA
+RHQ_E$RHQ584[RHQ_E$RHQ584=="Don't know"]<-NA
+RHQ_F$RHQ584[RHQ_F$RHQ584=="Refused"]<-NA
+RHQ_F$RHQ584[RHQ_F$RHQ584=="Don't know"]<-NA
+
+RHQ_D$RHQ600[RHQ_D$RHQ600=="Refused"]<-NA
+RHQ_D$RHQ600[RHQ_D$RHQ600=="Don't know"]<-NA
+RHQ_E$RHQ600[RHQ_E$RHQ600=="Refused"]<-NA
+RHQ_E$RHQ600[RHQ_E$RHQ600=="Don't know"]<-NA
+RHQ_F$RHQ600[RHQ_F$RHQ600=="Refused"]<-NA
+RHQ_F$RHQ600[RHQ_F$RHQ600=="Don't know"]<-NA
+
+#medical history
+MCQD = nhanes("MCQ_D")
+MCQE = nhanes("MCQ_E")
+MCQF = nhanes("MCQ_F")
+
+#keep only relevant variables
+MCQ_D = subset(MCQD, select = c(SEQN, MCQ010, MCQ160B, MCQ160C, MCQ160D, MCQ160E, MCQ160F, MCQ160G, MCQ160K, MCQ160L, MCQ220, MCQ300A))
+MCQ_E = subset(MCQE, select = c(SEQN, MCQ010, MCQ160B, MCQ160C, MCQ160D, MCQ160E, MCQ160F, MCQ160G, MCQ160K, MCQ160L, MCQ220, MCQ300A))
+MCQ_F = subset(MCQF, select = c(SEQN, MCQ010, MCQ160B, MCQ160C, MCQ160D, MCQ160E, MCQ160F, MCQ160G, MCQ160K, MCQ160L, MCQ220, MCQ300A))
+
+#treat refused and don't know as missing
+MCQ_D$MCQ010[MCQ_D$MCQ010=="Refused"]<-NA
+MCQ_D$MCQ010[MCQ_D$MCQ010=="Don't know"]<-NA
+MCQ_D$MCQ160B[MCQ_D$MCQ160B=="Refused"]<-NA
+MCQ_D$MCQ160B[MCQ_D$MCQ160B=="Don't know"]<-NA
+MCQ_D$MCQ160C[MCQ_D$MCQ160C=="Refused"]<-NA
+MCQ_D$MCQ160C[MCQ_D$MCQ160C=="Don't know"]<-NA
+MCQ_D$MCQ160D[MCQ_D$MCQ160D=="Refused"]<-NA
+MCQ_D$MCQ160D[MCQ_D$MCQ160D=="Don't know"]<-NA
+MCQ_D$MCQ160E[MCQ_D$MCQ160E=="Refused"]<-NA
+MCQ_D$MCQ160E[MCQ_D$MCQ160E=="Don't know"]<-NA
+MCQ_D$MCQ160F[MCQ_D$MCQ160F=="Refused"]<-NA
+MCQ_D$MCQ160F[MCQ_D$MCQ160F=="Don't know"]<-NA
+MCQ_D$MCQ160G[MCQ_D$MCQ160G=="Refused"]<-NA
+MCQ_D$MCQ160G[MCQ_D$MCQ160G=="Don't know"]<-NA
+MCQ_D$MCQ160K[MCQ_D$MCQ160K=="Refused"]<-NA
+MCQ_D$MCQ160K[MCQ_D$MCQ160K=="Don't know"]<-NA
+MCQ_D$MCQ160L[MCQ_D$MCQ160L=="Refused"]<-NA
+MCQ_D$MCQ160L[MCQ_D$MCQ160L=="Don't know"]<-NA
+MCQ_D$MCQ220[MCQ_D$MCQ220=="Refused"]<-NA
+MCQ_D$MCQ220[MCQ_D$MCQ220=="Don't know"]<-NA
+MCQ_D$MCQ300A[MCQ_D$MCQ300A=="Refused"]<-NA
+MCQ_D$MCQ300A[MCQ_D$MCQ300A=="Don't know"]<-NA
+
+MCQ_E$MCQ010[MCQ_E$MCQ010=="Refused"]<-NA
+MCQ_E$MCQ010[MCQ_E$MCQ010=="Don't know"]<-NA
+MCQ_E$MCQ160B[MCQ_E$MCQ160B=="Refused"]<-NA
+MCQ_E$MCQ160B[MCQ_E$MCQ160B=="Don't know"]<-NA
+MCQ_E$MCQ160C[MCQ_E$MCQ160C=="Refused"]<-NA
+MCQ_E$MCQ160C[MCQ_E$MCQ160C=="Don't know"]<-NA
+MCQ_E$MCQ160D[MCQ_E$MCQ160D=="Refused"]<-NA
+MCQ_E$MCQ160D[MCQ_E$MCQ160D=="Don't know"]<-NA
+MCQ_E$MCQ160E[MCQ_E$MCQ160E=="Refused"]<-NA
+MCQ_E$MCQ160E[MCQ_E$MCQ160E=="Don't know"]<-NA
+MCQ_E$MCQ160F[MCQ_E$MCQ160F=="Refused"]<-NA
+MCQ_E$MCQ160F[MCQ_E$MCQ160F=="Don't know"]<-NA
+MCQ_E$MCQ160G[MCQ_E$MCQ160G=="Refused"]<-NA
+MCQ_E$MCQ160G[MCQ_E$MCQ160G=="Don't know"]<-NA
+MCQ_E$MCQ160K[MCQ_E$MCQ160K=="Refused"]<-NA
+MCQ_E$MCQ160K[MCQ_E$MCQ160K=="Don't know"]<-NA
+MCQ_E$MCQ160L[MCQ_E$MCQ160L=="Refused"]<-NA
+MCQ_E$MCQ160L[MCQ_E$MCQ160L=="Don't know"]<-NA
+MCQ_E$MCQ220[MCQ_E$MCQ220=="Refused"]<-NA
+MCQ_E$MCQ220[MCQ_E$MCQ220=="Don't know"]<-NA
+MCQ_E$MCQ300A[MCQ_E$MCQ300A=="Refused"]<-NA
+MCQ_E$MCQ300A[MCQ_E$MCQ300A=="Don't know"]<-NA
+
+MCQ_F$MCQ010[MCQ_F$MCQ010=="Refused"]<-NA
+MCQ_F$MCQ010[MCQ_F$MCQ010=="Don't know"]<-NA
+MCQ_F$MCQ160B[MCQ_F$MCQ160B=="Refused"]<-NA
+MCQ_F$MCQ160B[MCQ_F$MCQ160B=="Don't know"]<-NA
+MCQ_F$MCQ160C[MCQ_F$MCQ160C=="Refused"]<-NA
+MCQ_F$MCQ160C[MCQ_F$MCQ160C=="Don't know"]<-NA
+MCQ_F$MCQ160D[MCQ_F$MCQ160D=="Refused"]<-NA
+MCQ_F$MCQ160D[MCQ_F$MCQ160D=="Don't know"]<-NA
+MCQ_F$MCQ160E[MCQ_F$MCQ160E=="Refused"]<-NA
+MCQ_F$MCQ160E[MCQ_F$MCQ160E=="Don't know"]<-NA
+MCQ_F$MCQ160F[MCQ_F$MCQ160F=="Refused"]<-NA
+MCQ_F$MCQ160F[MCQ_F$MCQ160F=="Don't know"]<-NA
+MCQ_F$MCQ160G[MCQ_F$MCQ160G=="Refused"]<-NA
+MCQ_F$MCQ160G[MCQ_F$MCQ160G=="Don't know"]<-NA
+MCQ_F$MCQ160K[MCQ_F$MCQ160K=="Refused"]<-NA
+MCQ_F$MCQ160K[MCQ_F$MCQ160K=="Don't know"]<-NA
+MCQ_F$MCQ160L[MCQ_F$MCQ160L=="Refused"]<-NA
+MCQ_F$MCQ160L[MCQ_F$MCQ160L=="Don't know"]<-NA
+MCQ_F$MCQ220[MCQ_F$MCQ220=="Refused"]<-NA
+MCQ_F$MCQ220[MCQ_F$MCQ220=="Don't know"]<-NA
+MCQ_F$MCQ300A[MCQ_F$MCQ300A=="Refused"]<-NA
+MCQ_F$MCQ300A[MCQ_F$MCQ300A=="Don't know"]<-NA
+
+#renal disease
+KIQD = nhanes("KIQ_U_D")
+KIQE = nhanes("KIQ_U_E")
+KIQF = nhanes("KIQ_U_F")
+
+#keep only relevant
+KIQ_D = subset(KIQD, select = c(SEQN, KIQ022))
+KIQ_E = subset(KIQE, select = c(SEQN, KIQ022))
+KIQ_F = subset(KIQF, select = c(SEQN, KIQ022))
+
+#treat refused and don't know as missing
+KIQ_D$KIQ022[KIQ_D$KIQ022=="Refused"]<-NA
+KIQ_D$KIQ022[KIQ_D$KIQ022=="Don't know"]<-NA
+
+KIQ_E$KIQ022[KIQ_E$KIQ022=="Refused"]<-NA
+KIQ_E$KIQ022[KIQ_E$KIQ022=="Don't know"]<-NA
+
+KIQ_F$KIQ022[KIQ_F$KIQ022=="Refused"]<-NA
+KIQ_F$KIQ022[KIQ_F$KIQ022=="Don't know"]<-NA
+
+#total nutrient intakes day 1 FFQ
+DR1TOTD = nhanes("DR1TOT_D")
+DR1TOTE = nhanes("DR1TOT_E")
+DR1TOTF = nhanes("DR1TOT_F")
+
+#keep only relevant
+DR1TOT_D = subset(DR1TOTD, select = c(SEQN, DR1TFIBE, DR1TKCAL, DR1TTFAT, DR1TSFAT, DR1TMFAT, DR1TPFAT))
+DR1TOT_E = subset(DR1TOTE, select = c(SEQN, DR1TFIBE, DR1TKCAL, DR1TTFAT, DR1TSFAT, DR1TMFAT, DR1TPFAT))
+DR1TOT_F = subset(DR1TOTF, select = c(SEQN, DR1TFIBE, DR1TKCAL, DR1TTFAT, DR1TSFAT, DR1TMFAT, DR1TPFAT))
+
+p99D1 <- quantile(DR1TOT_D$DR1TKCAL, 0.99, na.rm = TRUE)
+p99D2 <- quantile(DR1TOT_D$DR1TSFAT, 0.99, na.rm = TRUE)
+p99D3 <- quantile(DR1TOT_D$DR1TMFAT, 0.99, na.rm = TRUE)
+p99D4 <- quantile(DR1TOT_D$DR1TPFAT, 0.99, na.rm = TRUE)
+p99D5 <- quantile(DR1TOT_D$DR1TFIBE, 0.99, na.rm = TRUE)
+p99E1 <- quantile(DR1TOT_E$DR1TKCAL, 0.99, na.rm = TRUE)
+p99E2 <- quantile(DR1TOT_E$DR1TSFAT, 0.99, na.rm = TRUE)
+p99E3 <- quantile(DR1TOT_E$DR1TMFAT, 0.99, na.rm = TRUE)
+p99E4 <- quantile(DR1TOT_E$DR1TPFAT, 0.99, na.rm = TRUE)
+p99E5 <- quantile(DR1TOT_E$DR1TFIBE, 0.99, na.rm = TRUE)
+p99F1 <- quantile(DR1TOT_F$DR1TKCAL, 0.99, na.rm = TRUE)
+p99F2 <- quantile(DR1TOT_F$DR1TSFAT, 0.99, na.rm = TRUE)
+p99F3 <- quantile(DR1TOT_F$DR1TMFAT, 0.99, na.rm = TRUE)
+p99F4 <- quantile(DR1TOT_F$DR1TPFAT, 0.99, na.rm = TRUE)
+p99F5 <- quantile(DR1TOT_F$DR1TFIBE, 0.99, na.rm = TRUE)
+
+DR1TOT_D <- DR1TOT_D[DR1TOT_D$DR1TKCAL <= p99D1, ]
+DR1TOT_D <- DR1TOT_D[DR1TOT_D$DR1TSFAT <= p99D2, ]
+DR1TOT_D <- DR1TOT_D[DR1TOT_D$DR1TMFAT <= p99D3, ]
+DR1TOT_D <- DR1TOT_D[DR1TOT_D$DR1TPFAT <= p99D4, ]
+DR1TOT_D <- DR1TOT_D[DR1TOT_D$DR1TFIBE <= p99D5, ]
+DR1TOT_E <- DR1TOT_E[DR1TOT_E$DR1TKCAL <= p99E1, ]
+DR1TOT_E <- DR1TOT_E[DR1TOT_E$DR1TSFAT <= p99E2, ]
+DR1TOT_E <- DR1TOT_E[DR1TOT_E$DR1TMFAT <= p99E3, ]
+DR1TOT_E <- DR1TOT_E[DR1TOT_E$DR1TPFAT <= p99E4, ]
+DR1TOT_E <- DR1TOT_E[DR1TOT_E$DR1TFIBE <= p99E5, ]
+DR1TOT_F <- DR1TOT_F[DR1TOT_F$DR1TKCAL <= p99F1, ]
+DR1TOT_F <- DR1TOT_F[DR1TOT_F$DR1TSFAT <= p99F2, ]
+DR1TOT_F <- DR1TOT_F[DR1TOT_F$DR1TMFAT <= p99F3, ]
+DR1TOT_F <- DR1TOT_F[DR1TOT_F$DR1TPFAT <= p99F4, ]
+DR1TOT_F <- DR1TOT_F[DR1TOT_F$DR1TFIBE <= p99F5, ]
+
+#biochemistry profile
+BIOPROD = nhanes("BIOPRO_D")
+BIOPROE = nhanes("BIOPRO_E")
+BIOPROF = nhanes("BIOPRO_F")
+
+#keep only relevant
+BIOPRO_D = subset(BIOPROD, select = c(SEQN, LBXSCR, LBXSTB, LBXSASSI, LBXSATSI, LBXSUA, LBXSGL))
+BIOPRO_E = subset(BIOPROE, select = c(SEQN, LBXSCR, LBXSTB, LBXSASSI, LBXSATSI, LBXSUA, LBXSGL))
+BIOPRO_F = subset(BIOPROF, select = c(SEQN, LBXSCR, LBXSTB, LBXSASSI, LBXSATSI, LBXSUA, LBXSGL))
+
+p99DS <- quantile(BIOPRO_D$LBXSGL, 0.99, na.rm = TRUE)
+p99ES <- quantile(BIOPRO_E$LBXSGL, 0.99, na.rm = TRUE)
+p99FS <- quantile(BIOPRO_F$LBXSGL, 0.99, na.rm = TRUE)
+p99DC <- quantile(BIOPRO_D$LBXSCR, 0.99, na.rm = TRUE)
+p99EC <- quantile(BIOPRO_E$LBXSCR, 0.99, na.rm = TRUE)
+p99FC <- quantile(BIOPRO_F$LBXSCR, 0.99, na.rm = TRUE)
+p99DF <- quantile(BIOPRO_D$LBXSUA, 0.99, na.rm = TRUE)
+p99EF <- quantile(BIOPRO_E$LBXSUA, 0.99, na.rm = TRUE)
+p99FF <- quantile(BIOPRO_F$LBXSUA, 0.99, na.rm = TRUE)
+
+BIOPRO_D <- BIOPRO_D[BIOPRO_D$LBXSGL <= p99DS, ]
+BIOPRO_E <- BIOPRO_E[BIOPRO_E$LBXSGL <= p99ES, ]
+BIOPRO_F <- BIOPRO_F[BIOPRO_F$LBXSGL <= p99FS, ]
+BIOPRO_D <- BIOPRO_D[BIOPRO_D$LBXSCR <= p99DC, ]
+BIOPRO_E <- BIOPRO_E[BIOPRO_E$LBXSCR <= p99EC, ]
+BIOPRO_F <- BIOPRO_F[BIOPRO_F$LBXSCR <= p99FC, ]
+BIOPRO_D <- BIOPRO_D[BIOPRO_D$LBXSUA <= p99DF, ]
+BIOPRO_E <- BIOPRO_E[BIOPRO_E$LBXSUA <= p99EF, ]
+BIOPRO_F <- BIOPRO_F[BIOPRO_F$LBXSUA <= p99FF, ]
+
+#load linked mortality data
+base_url <- "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/datalinkage/linked_mortality/"
+
+mort_cols <- fwf_cols(
+  SEQN         = c(1, 6),
+  eligstat     = c(15, 15),
+  mortstat     = c(16, 16),
+  ucod_leading = c(17, 19),
+  diabetes     = c(20, 20),
+  hyperten     = c(21, 21),
+  permth_int   = c(43, 45),
+  permth_exm   = c(46, 48)
+)
+
+read_mort_url <- function(filename) {
+  url <- paste0(base_url, filename)
+  message("Downloading: ", url)
+  read_fwf(
+    file          = url,
+    col_types     = "iiiiiiii",
+    col_positions = mort_cols,
+    na            = c("", ".")
+  )
+}
+
+dat.mortD <- read_mort_url("NHANES_2005_2006_MORT_2019_PUBLIC.dat")
+dat.mortE <- read_mort_url("NHANES_2007_2008_MORT_2019_PUBLIC.dat")
+dat.mortF <- read_mort_url("NHANES_2009_2010_MORT_2019_PUBLIC.dat")
+
+#combine data
+complete_D <- list(demo_D, ALQ_D, BIOPRO_D, BMX_D, BPQ_D, BPX_D, CBC_D, CRPD, DIQ_D, dat.mortD, DR1TOT_D, GLU_D, HDL_D, KIQ_D, MCQ_D, PAQ_D, RHQ_D, SMQ_D, TCHOL_D, TRIGLY_D) %>% reduce(left_join, by = "SEQN")
+complete_E <- list(demo_E, ALQ_E, BIOPRO_E, BMX_E, BPQ_E, BPX_E, CBC_E, CRPE, DIQ_E, dat.mortE, DR1TOT_E, GLU_E, HDL_E, KIQ_E, MCQ_E, PAQ_E, RHQ_E, SMQ_E, TCHOL_E, TRIGLY_E) %>% reduce(left_join, by = "SEQN")
+complete_F <- list(demo_F, ALQ_F, BIOPRO_F, BMX_F, BPQ_F, BPX_F, CBC_F, CRPF, DIQ_F, dat.mortF, DR1TOT_F, GLU_F, HDL_F, KIQ_F, MCQ_F, PAQ_F, RHQ_F, SMQ_F, TCHOL_F, TRIGLY_F) %>% reduce(left_join, by = "SEQN")
+
+#combine all data in years where CRP taken
+complete_data <- smartbind(complete_D, complete_E, complete_F)
+
+#drop options with 0 (e.g. refused as now recoded)
+complete_data$DMDMARTL <- droplevels(complete_data$DMDMARTL)
+complete_data$BPQ020   <- droplevels(complete_data$BPQ020)
+complete_data$MCQ160K  <- droplevels(complete_data$MCQ160K)
+complete_data$MCQ160G  <- droplevels(complete_data$MCQ160G)
+complete_data$MCQ010   <- droplevels(complete_data$MCQ010)
+complete_data$RIAGENDR <- droplevels(complete_data$RIAGENDR)
+complete_data$RIDRETH1 <- droplevels(complete_data$RIDRETH1)
+complete_data$SMQ040   <- droplevels(complete_data$SMQ040)
+complete_data$SMQ020   <- droplevels(complete_data$SMQ020)
+complete_data$DMDEDUC2 <- droplevels(complete_data$DMDEDUC2)
+complete_data$DMDMARTL <- droplevels(complete_data$DMDMARTL)
+complete_data$ALQ101   <- droplevels(complete_data$ALQ101)
+complete_data$PAQ650   <- droplevels(complete_data$PAQ650)
+complete_data$BPQ040A  <- droplevels(complete_data$BPQ040A)
+complete_data$BPQ090D  <- droplevels(complete_data$BPQ090D)
+complete_data$DIQ050   <- droplevels(complete_data$DIQ050)
+complete_data$DIQ070   <- droplevels(complete_data$DIQ070)
+complete_data$DIQ010   <- droplevels(complete_data$DIQ010)
+complete_data$MCQ220   <- droplevels(complete_data$MCQ220)
+complete_data$MCQ160B  <- droplevels(complete_data$MCQ160B)
+complete_data$MCQ160F  <- droplevels(complete_data$MCQ160F)
+complete_data$MCQ160L  <- droplevels(complete_data$MCQ160L)
+complete_data$KIQ022   <- droplevels(complete_data$KIQ022)
+complete_data$MCQ160C  <- droplevels(complete_data$MCQ160C)
+
+#keep only final inclusions
+final_data = subset(complete_data, select = c(SEQN, BPQ020, WTMEC2YR, SDMVPSU, SDMVSTRA, permth_int, eligstat, mortstat, BMXHT, BMXWT, BMXBMI, BMXWAIST, MCQ160K, MCQ160G, MCQ010, LBDLYMNO, LBDNENO, LBXCRP, RIDAGEYR, RIAGENDR, RIDRETH1, SMQ020, SMQ040, DMDEDUC2, DMDMARTL, INDFMPIR, ALQ101, ALQ120Q, PAQ650, BPQ040A, BPXSY3, BPXDI3, LBDHDD, LBDLDL, LBXTC, BPQ090D, DIQ050, DIQ070, DIQ010, LBXGLU, LBXSGL, LBXIN, MCQ220, MCQ160B, MCQ160F, MCQ160L, KIQ022, MCQ160C, DR1TKCAL, DR1TSFAT, DR1TMFAT, DR1TPFAT, DR1TFIBE, LBXSCR, LBXSUA, LBXHGB, LBXSTB, LBXSASSI, LBXSATSI, LBXTR))
+
+#complete inflammatory marker and mortality data
+final_data <- final_data %>% filter(eligstat == 1)
+final_data <- final_data[complete.cases(final_data[ , c('LBXCRP')]), ]
+final_data$LBXCRP <- final_data$LBXCRP * 10
+
+#code variables as per He et al.
+#ethnicity: group 'others'
+final_data$RIDRETH1[final_data$RIDRETH1=="Other Hispanic"]<-"Other Race - Including Multi-Racial"
+final_data$RIDRETH1 <- droplevels(final_data$RIDRETH1)
+
+#education: group into three categories
+final_data$DMDEDUC2[final_data$DMDEDUC2=="Less than 9th grade"]<-"Less Than 9th Grade"
+final_data$DMDEDUC2[final_data$DMDEDUC2=="9-11th grade (Includes 12th grade with no diploma)"]<-"9-11th Grade (Includes 12th grade with no diploma)"
+final_data$DMDEDUC2[final_data$DMDEDUC2=="High school graduate/GED or equivalent"]<-"High School Grad/GED or Equivalent"
+final_data$DMDEDUC2[final_data$DMDEDUC2=="Some college or AA degree"]<-"Some College or AA degree"
+final_data$DMDEDUC2[final_data$DMDEDUC2=="College graduate or above"]<-"College Graduate or above"
+
+final_data <- final_data %>% mutate(DMDEDUC2HE = case_when(
+  DMDEDUC2 == "Less Than 9th Grade"                                ~ "Below High School",
+  DMDEDUC2 == "9-11th Grade (Includes 12th grade with no diploma)" ~ "Below High School",
+  DMDEDUC2 == "High School Grad/GED or Equivalent"                 ~ "High School or Equivalent",
+  DMDEDUC2 == "Some College or AA degree"                          ~ "Above High School",
+  DMDEDUC2 == "College Graduate or above"                          ~ "Above High School"
+))
+
+#smoking status into never, former, active
+final_data <- final_data %>% mutate(SMQHE = case_when(
+  SMQ020 == "No"                           ~ "Never Smoker",
+  SMQ020 == "Yes" & SMQ040 == "Not at all" ~ "Former Smoker",
+  SMQ020 == "Yes" & SMQ040 == "Some days"  ~ "Active Smoker",
+  SMQ020 == "Yes" & SMQ040 == "Every day"  ~ "Active Smoker"
+))
+
+#alcohol drinking into never, former, active
+final_data <- final_data %>% mutate(ALQHE = case_when(
+  ALQ101 == "No"                    ~ "Never Drinker",
+  ALQ101 == "Yes" & ALQ120Q == 0   ~ "Former Drinker",
+  ALQ101 == "Yes" & ALQ120Q > 0    ~ "Active Drinker"
+))
+
+#hypertension if SBP >= 140, DBP >= 90 or use of anti-hypertensives
+final_data <- final_data %>% mutate(
+  BPXHE = case_when(
+    is.na(BPXSY3) & is.na(BPXDI3) & is.na(BPQ040A) ~ NA_character_,
+    BPXSY3 >= 140 | BPXDI3 >= 90 | BPQ040A == "Yes" ~ "Hypertensive",
+    TRUE                                              ~ "Not Hypertensive"
+  )
+)
+
+#diabetes if fasting plasma glucose level >=126 mg/dL, non-fasting plasma glucose level >=200 mg/dL, or use of hypoglycemic medication
+final_data <- final_data %>% mutate(
+  DIQHE = case_when(
+    is.na(DIQ050) & is.na(DIQ070) & is.na(LBXGLU) ~ NA_character_,
+    DIQ050 == "Yes" | DIQ070 == "Yes" | LBXGLU >= 126 | LBXSGL >= 200 ~ "Diabetic",
+    TRUE                                                                 ~ "Not Diabetic"
+  )
+)
+
+#hyperlipidemia if total chol >= 240 mg/dL, LDL >= 160 mg/dL, HDL <= 40 mg/dL, or current use of lipid-lowering agents
+final_data <- final_data %>% mutate(
+  LIPIDHE = case_when(
+    is.na(LBXTC) & is.na(LBDLDL) & is.na(LBDHDD) ~ NA_character_,
+    LBXTC >= 240 | LBDLDL >= 160 | LBDHDD <= 40 | BPQ090D == "Yes" ~ "Hyperlipidemia",
+    TRUE                                                              ~ "No Hyperlipidemia"
+  )
+)
+
+#cardiovascular disease was defined as a self-reported history of coronary heart disease, stroke, or congestive heart failure
+final_data <- final_data %>% mutate(
+  CVDHE = case_when(
+    is.na(MCQ160B) & is.na(MCQ160C) & is.na(MCQ160F) ~ NA_character_,
+    MCQ160B == "Yes" | MCQ160C == "Yes" | MCQ160F == "Yes" ~ "History of CVD",
+    TRUE                                                    ~ "No History of CVD"
+  )
+)
+
+#history of respiratory disease = history of asthma, emphysema, or bronchitis
+final_data <- final_data %>% mutate(
+  RESPHE = case_when(
+    is.na(MCQ010) & is.na(MCQ160G) & is.na(MCQ160K) ~ NA_character_,
+    MCQ010 == "Yes" | MCQ160G == "Yes" | MCQ160K == "Yes" ~ "History of respiratory disease",
+    TRUE                                                    ~ "No history of respiratory disease"
+  )
+)
+
+#CRP categorisations
+final_data$CRPQUART  <- cut_number(final_data$LBXCRP, 4)
+final_data$CRPBIN    <- cut_number(final_data$LBXCRP, 2)
+final_data$CRPTERT   <- cut_number(final_data$LBXCRP, 3)
+final_data$CRPNATLOG <- log(final_data$LBXCRP)
+final_data$CRPQUINT  <- cut_number(final_data$LBXCRP, 5)
+
+#convert to correct variable type
+final_data$SMQHE   <- as.categorical(final_data$SMQHE)
+final_data$ALQHE   <- as.categorical(final_data$ALQHE)
+final_data$BPXHE   <- as.categorical(final_data$BPXHE)
+final_data$LIPIDHE <- as.categorical(final_data$LIPIDHE)
+final_data$DIQHE   <- as.categorical(final_data$DIQHE)
+final_data$RESPHE  <- as.categorical(final_data$RESPHE)
+final_data$CVDHE   <- as.categorical(final_data$CVDHE)
+
+final_data$SMQHE   <- droplevels(final_data$SMQHE)
+final_data$ALQHE   <- droplevels(final_data$ALQHE)
+final_data$BPXHE   <- droplevels(final_data$BPXHE)
+final_data$LIPIDHE <- droplevels(final_data$LIPIDHE)
+final_data$DIQHE   <- droplevels(final_data$DIQHE)
+final_data$RESPHE  <- droplevels(final_data$RESPHE)
+final_data$CVDHE   <- droplevels(final_data$CVDHE)
+
+#####DESCRIPTIVE ANALYSIS#####
+
+#total number of participants
+n_total <- nrow(final_data)
+
+#total follow-up time in months and years
+total_months <- sum(final_data$permth_int, na.rm = TRUE)
+total_years  <- total_months / 12
+
+#median follow-up time and IQR
+followup_summary <- final_data %>%
+  summarise(
+    median_followup = median(permth_int, na.rm = TRUE),
+    iqr_lower       = quantile(permth_int, 0.25, na.rm = TRUE),
+    iqr_upper       = quantile(permth_int, 0.75, na.rm = TRUE)
+  )
+
+#total number of deaths and percent of cohort
+death_summary <- final_data %>%
+  summarise(
+    deaths        = sum(mortstat == 1, na.rm = TRUE),
+    percent_death = round(100 * deaths / n_total, 1)
+  )
+
+describe_cohort <- function(data) {
+  summarise(
+    data,
+    N             = n(),
+    PersonYears   = round(sum(permth_int, na.rm = TRUE) / 12, 1),
+    DeathsN       = sum(mortstat == 1, na.rm = TRUE),
+    DeathsPercent = round(mean(mortstat == 1, na.rm = TRUE) * 100, 1),
+    AgeMean  = round(mean(RIDAGEYR, na.rm = TRUE), 1),
+    AgeSD    = round(sd(RIDAGEYR,   na.rm = TRUE), 2),
+    SBPMean  = round(mean(BPXSY3,  na.rm = TRUE), 1),
+    SBPSD    = round(sd(BPXSY3,    na.rm = TRUE), 2),
+    CholMean = round(mean(LBXTC,   na.rm = TRUE), 1),
+    CholSD   = round(sd(LBXTC,     na.rm = TRUE), 2),
+    Male_N      = sum(RIAGENDR == "Male", na.rm = TRUE),
+    MalePercent = round(mean(RIAGENDR == "Male", na.rm = TRUE) * 100, 1),
+    CRPMedian = round(median(LBXCRP,             na.rm = TRUE), 2),
+    CRPMin    = round(min(LBXCRP,                na.rm = TRUE), 2),
+    CRPMax    = round(max(LBXCRP,                na.rm = TRUE), 2),
+    CRPQ1     = round(quantile(LBXCRP, 0.25,     na.rm = TRUE), 2),
+    CRPQ3     = round(quantile(LBXCRP, 0.75,     na.rm = TRUE), 2),
+    Diabetes_N          = sum(DIQ010 == "Yes",  na.rm = TRUE),
+    DiabetesPercent     = round(mean(DIQ010 == "Yes",  na.rm = TRUE) * 100, 1),
+    Hypertension_N      = sum(BPQ020 == "Yes",  na.rm = TRUE),
+    HypertensionPercent = round(mean(BPQ020 == "Yes",  na.rm = TRUE) * 100, 1),
+    Cancer_N            = sum(MCQ220 == "Yes",  na.rm = TRUE),
+    CancerPercent       = round(mean(MCQ220 == "Yes",  na.rm = TRUE) * 100, 1),
+    Mexican_N           = sum(RIDRETH1 == "Mexican American",                        na.rm = TRUE),
+    Mexican_Percent     = round(mean(RIDRETH1 == "Mexican American",                 na.rm = TRUE) * 100, 1),
+    NHWhite_N           = sum(RIDRETH1 == "Non-Hispanic White",                      na.rm = TRUE),
+    NHWhite_Percent     = round(mean(RIDRETH1 == "Non-Hispanic White",               na.rm = TRUE) * 100, 1),
+    NHBlack_N           = sum(RIDRETH1 == "Non-Hispanic Black",                      na.rm = TRUE),
+    NHBlack_Percent     = round(mean(RIDRETH1 == "Non-Hispanic Black",               na.rm = TRUE) * 100, 1),
+    OtherRace_N         = sum(RIDRETH1 == "Other Race - Including Multi-Racial",     na.rm = TRUE),
+    OtherRace_Percent   = round(mean(RIDRETH1 == "Other Race - Including Multi-Racial", na.rm = TRUE) * 100, 1),
+    Educ_Less9_N         = sum(DMDEDUC2 == "Less Than 9th Grade",                                    na.rm = TRUE),
+    Educ_Less9_Percent   = round(mean(DMDEDUC2 == "Less Than 9th Grade",                             na.rm = TRUE) * 100, 1),
+    Educ_911_N           = sum(DMDEDUC2 == "9-11th Grade (Includes 12th grade with no diploma)",     na.rm = TRUE),
+    Educ_911_Percent     = round(mean(DMDEDUC2 == "9-11th Grade (Includes 12th grade with no diploma)", na.rm = TRUE) * 100, 1),
+    Educ_HS_N            = sum(DMDEDUC2 == "High School Grad/GED or Equivalent",                     na.rm = TRUE),
+    Educ_HS_Percent      = round(mean(DMDEDUC2 == "High School Grad/GED or Equivalent",              na.rm = TRUE) * 100, 1),
+    Educ_College_N       = sum(DMDEDUC2 == "Some College or AA degree",                              na.rm = TRUE),
+    Educ_College_Percent = round(mean(DMDEDUC2 == "Some College or AA degree",                       na.rm = TRUE) * 100, 1),
+    Educ_Grad_N          = sum(DMDEDUC2 == "College Graduate or above",                              na.rm = TRUE),
+    Educ_Grad_Percent    = round(mean(DMDEDUC2 == "College Graduate or above",                       na.rm = TRUE) * 100, 1),
+    Smoking_Active_N       = sum(SMQHE == "Active Smoker",  na.rm = TRUE),
+    Smoking_Active_Percent = round(mean(SMQHE == "Active Smoker", na.rm = TRUE) * 100, 1),
+    Smoking_Former_N       = sum(SMQHE == "Former Smoker",  na.rm = TRUE),
+    Smoking_Former_Percent = round(mean(SMQHE == "Former Smoker", na.rm = TRUE) * 100, 1),
+    Smoking_Never_N        = sum(SMQHE == "Never Smoker",   na.rm = TRUE),
+    Smoking_Never_Percent  = round(mean(SMQHE == "Never Smoker",  na.rm = TRUE) * 100, 1),
+    BMIMedian = round(median(BMXBMI, na.rm = TRUE), 1),
+    BMIIQR    = paste0(round(quantile(BMXBMI, 0.25, na.rm = TRUE), 1), "-",
+                       round(quantile(BMXBMI, 0.75, na.rm = TRUE), 1)),
+    PA_Yes_N       = sum(PAQ650 == "Yes",  na.rm = TRUE),
+    PA_Yes_Percent = round(mean(PAQ650 == "Yes", na.rm = TRUE) * 100, 1),
+    CVD_Yes_N       = sum(CVDHE == "History of CVD",  na.rm = TRUE),
+    CVD_Yes_Percent = round(mean(CVDHE == "History of CVD", na.rm = TRUE) * 100, 1),
+    RESP_Yes_N       = sum(RESPHE == "History of respiratory disease",  na.rm = TRUE),
+    RESP_Yes_Percent = round(mean(RESPHE == "History of respiratory disease", na.rm = TRUE) * 100, 1),
+    LiverDisease_N      = sum(MCQ160L == "Yes",  na.rm = TRUE),
+    LiverDiseasePercent = round(mean(MCQ160L == "Yes", na.rm = TRUE) * 100, 1),
+    Kidney_Yes_N       = sum(KIQ022 == "Yes",  na.rm = TRUE),
+    Kidney_Yes_Percent = round(mean(KIQ022 == "Yes", na.rm = TRUE) * 100, 1),
+    IncomeMedian = round(median(INDFMPIR, na.rm = TRUE), 2),
+    IncomeIQR    = paste0(round(quantile(INDFMPIR, 0.25, na.rm = TRUE), 2), "-",
+                          round(quantile(INDFMPIR, 0.75, na.rm = TRUE), 2)),
+    GlucoseMedian = round(median(LBXSGL, na.rm = TRUE), 1),
+    GlucoseIQR    = paste0(round(quantile(LBXSGL, 0.25, na.rm = TRUE), 1), "-",
+                           round(quantile(LBXSGL, 0.75, na.rm = TRUE), 1))
+  )
+}
+
+cohort_descriptives <- describe_cohort(final_data)
+print(cohort_descriptives)
+
+#####CONVENTIONAL MODELS#####
+
+#model 1
+model1 <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG,
+                data = final_data)
+
+#model 2: + age, sex
+model2 <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG +
+                  RIDAGEYR + RIAGENDR,
+                data = final_data)
+
+#model 3: + ethnicity, smoking, BMI
+model3 <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG +
+                  RIDAGEYR + RIAGENDR + RIDRETH1 + SMQHE + BMXBMI,
+                data = final_data)
+
+#model 4: + education, alcohol, physical activity, systolic BP,
+#          hypertension, total cholesterol, HDL, diabetes, CVD history
+model4 <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG +
+                  RIDAGEYR + RIAGENDR + RIDRETH1 + SMQHE + BMXBMI +
+                  DMDEDUC2 + ALQHE + PAQ650 + BPXSY3 + BPQ020 +
+                  LBXTC + LBDHDD + DIQ010 + CVDHE,
+                data = final_data)
+
+#model 5: + liver disease, cancer, creatinine,
+#          respiratory disease, caloric intake, poverty ratio
+model5 <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG +
+                  RIDAGEYR + RIAGENDR + RIDRETH1 + SMQHE + BMXBMI +
+                  DMDEDUC2 + ALQHE + PAQ650 + BPXSY3 + BPQ020 +
+                  LBXTC + LBDHDD + DIQ010 + CVDHE +
+                  MCQ160L + MCQ220 + LBXSCR + RESPHE + DR1TKCAL + INDFMPIR,
+                data = final_data)
+
+#extract CRP hazard ratio (exponentiated = HR) with 95% CI from each model
+result_m1 <- tidy(model1, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "CRPNATLOG") %>% mutate(Model = "Model 1")
+result_m2 <- tidy(model2, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "CRPNATLOG") %>% mutate(Model = "Model 2")
+result_m3 <- tidy(model3, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "CRPNATLOG") %>% mutate(Model = "Model 3")
+result_m4 <- tidy(model4, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "CRPNATLOG") %>% mutate(Model = "Model 4")
+result_m5 <- tidy(model5, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "CRPNATLOG") %>% mutate(Model = "Model 5")
+
+#combine into one table
+crp_log_results <- bind_rows(result_m1, result_m2, result_m3, result_m4, result_m5)
+print(crp_log_results, n = Inf)
+
+#####COLOUR PALETTE#####
+
+col_group1    <- "#2C7BB6"
+col_group2    <- "#1A9641"
+col_group3    <- "#D7191C"
+col_neutral   <- "grey50"
+col_signif    <- viridis::viridis(1, begin = 0.3)
+col_nonsignif <- "#E08A3C"
+col_ci        <- col_neutral
+col_main      <- col_group1
+
+# figure text sizes: all figures saved at 7 inches wide (AJE portrait maximum)
+# AJE requires minimum 8 pt in the final printed figure
+fig_base_size  <- 9   # base font size (pt)
+fig_axis_text  <- 8   # axis tick labels (pt) -- AJE minimum
+fig_axis_title <- 9   # axis titles (pt)
+fig_strip_text <- 8   # facet strip labels (pt)
+
+#####FIGURE 2: SENSITIVITY GRAPH#####
+
+#population definition (age+sex adjusted; sex-stratified models age-only)
+m_female   <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR,
+                    data = subset(final_data, RIAGENDR == "Female"))
+m_male     <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR,
+                    data = subset(final_data, RIAGENDR == "Male"))
+m_age45    <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, RIDAGEYR > 45))
+m_age65    <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, RIDAGEYR > 65))
+
+#reverse causality (age+sex adjusted)
+m_excl_1yr <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, !(mortstat == 1 & permth_int < 12)))
+m_excl_4yr <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, !(mortstat == 1 & permth_int < 48)))
+m_crp3     <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, LBXCRP <= 3))
+m_crp10    <- coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+                    data = subset(final_data, LBXCRP <= 10))
+
+extract_hr <- function(m, label, group) {
+  cf <- summary(m)$coefficients
+  ci <- exp(confint(m))
+  data.frame(
+    label   = label,
+    group   = group,
+    n       = m$n,
+    events  = m$nevent,
+    HR      = exp(cf["CRPNATLOG", "coef"]),
+    CI_low  = ci["CRPNATLOG", 1],
+    CI_high = ci["CRPNATLOG", 2],
+    p_value = cf["CRPNATLOG", "Pr(>|z|)"]
+  )
+}
+
+sensitivity_results <- bind_rows(
+  extract_hr(model1,     "Unadjusted",                "Covariate adjustment"),
+  extract_hr(model2,     "Age & Sex only",             "Covariate adjustment"),
+  extract_hr(model3,     "Model 3",                    "Covariate adjustment"),
+  extract_hr(model4,     "Model 4",                    "Covariate adjustment"),
+  extract_hr(model5,     "Model 5",                    "Covariate adjustment"),
+  extract_hr(m_female,   "Female only",                "Population definition"),
+  extract_hr(m_male,     "Male only",                  "Population definition"),
+  extract_hr(m_age45,    "Age > 45 years",             "Population definition"),
+  extract_hr(m_age65,    "Age > 65 years",             "Population definition"),
+  extract_hr(m_excl_1yr, "Deaths < 1 year excluded",  "Handling of potential reverse causality"),
+  extract_hr(m_excl_4yr, "Deaths < 4 years excluded", "Handling of potential reverse causality"),
+  extract_hr(m_crp3,     "CRP > 3 mg/L excluded",     "Handling of potential reverse causality"),
+  extract_hr(m_crp10,    "CRP > 10 mg/L excluded",    "Handling of potential reverse causality")
+)
+
+fmt <- function(x) formatC(x, format = "d", big.mark = ",")
+
+group_order <- c(
+  "Covariate adjustment",
+  "Population definition",
+  "Handling of potential reverse causality"
+)
+
+group_colors <- c(
+  "Covariate adjustment"                    = col_group1,
+  "Population definition"                   = col_group2,
+  "Handling of potential reverse causality" = col_group3
+)
+
+sensitivity_results <- sensitivity_results %>%
+  mutate(
+    label_annotated = paste0(label, "\n(n=", fmt(n), "; ", fmt(events), " deaths)"),
+    group           = factor(group, levels = group_order),
+    group_strip     = str_wrap(as.character(group), width = 20)
+  )
+
+sensitivity_results$label_annotated <- factor(
+  sensitivity_results$label_annotated,
+  levels = rev(unique(sensitivity_results$label_annotated))
+)
+
+strip_levels        <- str_wrap(group_order, width = 20)
+sensitivity_results$group_strip <- factor(sensitivity_results$group_strip, levels = strip_levels)
+group_colors_strip  <- setNames(group_colors, str_wrap(names(group_colors), width = 20))
+
+p <- ggplot(sensitivity_results, aes(x = HR, y = label_annotated, colour = group_strip)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = col_neutral, linewidth = 0.5) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high), height = 0, linewidth = 0.6) +
+  geom_point(size = 2.5, shape = 18) +
+  facet_grid(group_strip ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  scale_colour_manual(values = group_colors_strip, guide = "none") +
+  scale_x_continuous(
+    trans  = "log",
+    name   = "Hazard ratio (95% CI) per unit increase in ln(CRP)",
+    breaks = c(0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4),
+    limits = c(0.8, 1.4)
+  ) +
+  labs(y = NULL) +
+  theme_minimal(base_size = fig_base_size, base_family = "sans") +
+  theme(
+    strip.placement    = "outside",
+    strip.text.y.left  = element_text(angle = 0, hjust = 1, face = "bold",
+                                      size = fig_strip_text, colour = "black"),
+    panel.grid.major.x = element_line(colour = "grey88", linetype = "dashed", linewidth = 0.4),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.spacing      = unit(0.8, "lines"),
+    axis.text.y        = element_text(size = fig_axis_text, colour = "black",
+                                      hjust = 1, lineheight = 1.25),
+    axis.text.x        = element_text(size = fig_axis_text, colour = "black"),
+    axis.title.x       = element_text(size = fig_axis_title, colour = "black",
+                                      margin = margin(t = 6)),
+    plot.margin        = margin(10, 20, 10, 10)
+  )
+
+print(p)
+
+table_out <- sensitivity_results %>%
+  arrange(group, desc(label_annotated)) %>%
+  transmute(
+    Group      = as.character(group),
+    Analysis   = label,
+    Adjustment = case_when(
+      Group == "Covariate adjustment"           ~ as.character(label),
+      label %in% c("Female only", "Male only")  ~ "Age only",
+      TRUE                                       ~ "Age & sex"
+    ),
+    N       = fmt(n),
+    Deaths  = fmt(events),
+    HR      = round(HR, 2),
+    CI_low  = round(CI_low, 2),
+    CI_high = round(CI_high, 2),
+    p_value = formatC(p_value, format = "f", digits = 3)
+  ) %>%
+  mutate(`HR (95% CI)` = paste0(HR, " (", CI_low, "\u2013", CI_high, ")")) %>%
+  select(Group, Analysis, Adjustment, N, Deaths, `HR (95% CI)`, p_value)
+
+print(table_out, row.names = FALSE)
+write.csv(table_out, "sensitivity_analysis.csv", row.names = FALSE)
+
+#####FIGURE 3A: HR BY INCREASING DEATH EXCLUSION WINDOW#####
+
+months_seq <- seq(0, 60, by = 1)
+
+results_months <- lapply(months_seq, function(m) {
+  sub <- if (m == 0) {
+    final_data
+  } else {
+    final_data[!(final_data$mortstat == 1 & final_data$permth_int < m), ]
+  }
+  
+  fit <- tryCatch(
+    coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+          data = sub),
+    error = function(e) NULL
+  )
+  
+  if (is.null(fit)) return(NULL)
+  
+  s   <- summary(fit)
+  idx <- which(rownames(s$coefficients) == "CRPNATLOG")
+  
+  data.frame(
+    months_excluded = m,
+    HR              = s$conf.int[idx, "exp(coef)"],
+    CI_lower        = s$conf.int[idx, "lower .95"],
+    CI_upper        = s$conf.int[idx, "upper .95"]
+  )
+}) %>%
+  bind_rows()
+
+p1 <- ggplot(results_months, aes(x = months_excluded, y = HR)) +
+  geom_ribbon(aes(ymin = CI_lower, ymax = CI_upper),
+              fill = col_main, alpha = 0.15) +
+  geom_line(colour = col_main, linewidth = 0.9) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = col_neutral, linewidth = 0.5) +
+  scale_x_continuous(
+    name   = "Deaths excluded within first n months of follow-up",
+    breaks = seq(0, 60, by = 6),
+    limits = c(0, 60)
+  ) +
+  scale_y_continuous(
+    trans  = "log",
+    name   = "Hazard ratio (95% CI) per unit increase in ln(CRP)",
+    breaks = c(0.9, 1.0, 1.1, 1.2, 1.3),
+    limits = c(0.9, max(results_months$CI_upper) + 0.06)
+  ) +
+  theme_minimal(base_size = fig_base_size, base_family = "sans") +
+  theme(
+    axis.text        = element_text(size = fig_axis_text,  colour = "black"),
+    axis.title       = element_text(size = fig_axis_title, colour = "black"),
+    axis.title.x     = element_text(margin = margin(t = 6)),
+    axis.title.y     = element_text(margin = margin(r = 6)),
+    panel.grid.minor = element_blank(),
+    plot.margin      = margin(10, 20, 10, 10)
+  )
+
+print(p1)
+ggsave("hr_by_death_exclusion.pdf", p1, width = 7, height = 5)
+ggsave("hr_by_death_exclusion.png", p1, width = 7, height = 5, dpi = 300)
+
+#####FIGURE 3B: HR BY DECREASING CRP UPPER LIMIT CUT-OFF#####
+
+crp_seq <- seq(30, 3, by = -0.5)
+
+results_crp <- lapply(crp_seq, function(cutoff) {
+  sub <- final_data[final_data$LBXCRP <= cutoff, ]
+  
+  if (nrow(sub) < 50) return(NULL)
+  
+  fit <- tryCatch(
+    coxph(Surv(permth_int, mortstat) ~ CRPNATLOG + RIDAGEYR + RIAGENDR,
+          data = sub),
+    error = function(e) NULL
+  )
+  
+  if (is.null(fit)) return(NULL)
+  
+  s   <- summary(fit)
+  idx <- which(rownames(s$coefficients) == "CRPNATLOG")
+  
+  data.frame(
+    crp_cutoff = cutoff,
+    HR         = s$conf.int[idx, "exp(coef)"],
+    CI_lower   = s$conf.int[idx, "lower .95"],
+    CI_upper   = s$conf.int[idx, "upper .95"]
+  )
+}) %>%
+  bind_rows()
+
+p2 <- ggplot(results_crp, aes(x = crp_cutoff, y = HR)) +
+  geom_ribbon(aes(ymin = CI_lower, ymax = CI_upper),
+              fill = col_main, alpha = 0.15) +
+  geom_line(colour = col_main, linewidth = 0.9) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = col_neutral, linewidth = 0.5) +
+  scale_x_continuous(
+    name   = "CRP upper limit cut-off (mg/L)",
+    breaks = seq(0, 30, by = 5),
+    limits = c(0, 30)
+  ) +
+  scale_y_continuous(
+    trans  = "log",
+    name   = "Hazard ratio (95% CI) per unit increase in ln(CRP)",
+    breaks = c(0.9, 1.0, 1.1, 1.2, 1.3),
+    limits = c(0.9, max(results_crp$CI_upper, na.rm = TRUE) + 0.06)
+  ) +
+  theme_minimal(base_size = fig_base_size, base_family = "sans") +
+  theme(
+    axis.text        = element_text(size = fig_axis_text,  colour = "black"),
+    axis.title       = element_text(size = fig_axis_title, colour = "black"),
+    axis.title.x     = element_text(margin = margin(t = 6)),
+    axis.title.y     = element_text(margin = margin(r = 6)),
+    panel.grid.minor = element_blank(),
+    plot.margin      = margin(10, 20, 10, 10)
+  )
+
+print(p2)
+ggsave("hr_by_crp_cutoff.pdf", p2, width = 7, height = 5)
+ggsave("hr_by_crp_cutoff.png", p2, width = 7, height = 5, dpi = 300)
+
+#####FIGURE 1: SPECIFICATION CURVE#####
+
+tidy_full <- function(x) {
+  fit     <- broom::tidy(x, conf.int = TRUE)
+  fit$res <- list(x)
+  fit
+}
+
+#include required variables
+required_vars <- c(
+  "permth_int", "mortstat", "RIDAGEYR", "RIAGENDR", "CVDHE", "LBXCRP",
+  "CRPNATLOG", "RIDRETH1", "SMQHE", "BMXBMI", "DMDEDUC2", "ALQHE", "PAQ650",
+  "BPQ020", "BPXSY3", "LBDHDD", "LBXTC", "CVDHE", "DIQ010",
+  "MCQ160L", "MCQ220", "LBXSCR", "RESPHE", "DR1TKCAL", "INDFMPIR"
+)
+
+simplified_data <- final_data %>% select(all_of(required_vars))
+
+#age subsets (overlapping)
+df_age_18 <- simplified_data %>% filter(RIDAGEYR > 18) %>% mutate(age_group = "Age > 18")
+df_age_45 <- simplified_data %>% filter(RIDAGEYR > 45) %>% mutate(age_group = "Age > 45")
+df_age_65 <- simplified_data %>% filter(RIDAGEYR > 65) %>% mutate(age_group = "Age > 65")
+
+analysis_data <- bind_rows(df_age_18, df_age_45, df_age_65)
+
+#sex subsets (male, female, both)
+analysis_data <- bind_rows(
+  analysis_data %>% filter(RIAGENDR == "Male")   %>% mutate(sex_group = "Male"),
+  analysis_data %>% filter(RIAGENDR == "Female") %>% mutate(sex_group = "Female"),
+  analysis_data %>% mutate(sex_group = "Both")
+)
+
+#early death (first 3 years) exclusion subsets
+analysis_data <- analysis_data %>%
+  mutate(is_early_death = (mortstat == 1 & permth_int <= 36))
+
+analysis_data <- bind_rows(
+  analysis_data %>% mutate(early_death_exclusion = "Not Excluded"),
+  analysis_data %>% filter(!is_early_death) %>% mutate(early_death_exclusion = "Excluded")
+)
+
+#high CRP (>10) exclusion subsets
+analysis_data <- bind_rows(
+  analysis_data %>% mutate(crp_exclusion = "Not Excluded"),
+  analysis_data %>% filter(LBXCRP <= 10) %>% mutate(crp_exclusion = "Excluded")
+)
+
+#control variables for adjustment
+controls <- c(
+  "DMDEDUC2", "ALQHE", "PAQ650", "BPQ020", "BPXSY3", "LBDHDD", "LBXTC", "CVDHE", "DIQ010",
+  "MCQ160L", "MCQ220", "LBXSCR", "RESPHE", "DR1TKCAL", "INDFMPIR"
+)
+
+#define model
+coxph_robust <- function(formula, data, ...) {
+  purrr::possibly(
+    .f = function(f, d) {
+      survival::coxph(
+        formula = as.formula(paste0(f, " + RIDRETH1 + SMQHE + BMXBMI + RIDAGEYR")),
+        data = d
+      )
+    },
+    otherwise = NULL
+  )(formula, data)
+}
+
+#define analytic subsets
+subset_choices <- list(
+  age_group             = c("Age > 18", "Age > 45", "Age > 65"),
+  sex_group             = c("Male", "Female", "Both"),
+  early_death_exclusion = c("Not Excluded", "Excluded"),
+  crp_exclusion         = c("Not Excluded", "Excluded")
+)
+
+#setup specification curve
+specs <- setup(
+  data     = analysis_data,
+  y        = "Surv(permth_int, mortstat)",
+  x        = "CRPNATLOG",
+  model    = "coxph_robust",
+  controls = controls,
+  subsets  = subset_choices,
+  fun1     = tidy_full
+)
+
+#filter out specs with any NA in subset columns
+specs$specs <- specs$specs %>%
+  filter(
+    !is.na(age_group),
+    !is.na(sex_group),
+    !is.na(early_death_exclusion),
+    !is.na(crp_exclusion)
+  )
+
+#limit total number of specs to 3000 for efficiency
+total_specs   <- nrow(specs$specs)
+set_size      <- min(3000, total_specs)
+set.seed(456)
+sampled_specs <- specs$specs %>% slice_sample(n = set_size)
+specs$specs   <- sampled_specs
+
+#run the specification curve analysis
+results <- specr(specs)
+
+#add a unique spec_id to both the results and the original specifications for joining
+res_df            <- results$data %>% mutate(spec_id = row_number())
+original_specs_df <- specs$specs  %>% mutate(spec_id = row_number())
+
+#####process for graphical display#####
+
+plot_specs_df <- original_specs_df %>%
+  mutate(
+    death_choice = if_else(early_death_exclusion == "Excluded", "Death: Excluded", "Death: Not Excluded"),
+    crp_choice   = if_else(crp_exclusion == "Excluded", "CRP: Excluded", "CRP: Not Excluded")
+  ) %>%
+  select(spec_id, controls, age_group, sex_group, death_choice, crp_choice)
+
+demographic_age_groups    <- c("Age > 18", "Age > 45", "Age > 65")
+demographic_gender_groups <- c("Male", "Female", "Both")
+exclusion_groups <- c(
+  "Death: Excluded", "Death: Not Excluded",
+  "CRP: Excluded", "CRP: Not Excluded"
+)
+covariate_vars <- c(
+  "DMDEDUC2", "ALQHE", "PAQ650", "BPQ020", "BPXSY3", "LBDHDD", "LBXTC", "CVDHE", "DIQ010",
+  "MCQ160L", "MCQ220", "LBXSCR", "RESPHE", "DR1TKCAL", "INDFMPIR"
+)
+
+gap_demog_excl <- "---GAP_DEMOG_EXCL---"
+gap_excl_cov   <- "---GAP_EXCL_COV---"
+
+all_vars_to_plot <- c(
+  demographic_age_groups,
+  demographic_gender_groups,
+  gap_demog_excl,
+  exclusion_groups,
+  gap_excl_cov,
+  covariate_vars
+)
+
+var_labels <- c(
+  "DMDEDUC2"  = "Education Level",
+  "INDFMPIR"  = "Socioeconomic status",
+  "ALQHE"     = "Alcohol consumption",
+  "PAQ650"    = "Physical activity",
+  "BPXSY3"    = "Systolic blood pressure",
+  "BPQ020"    = "History of hypertension",
+  "LBXTC"     = "Total cholesterol",
+  "LBXSCR"    = "Creatinine",
+  "LBDHDD"    = "HDL cholesterol",
+  "MCQ220"    = "History of cancer",
+  "CVDHE"     = "History of cardiovascular disease",
+  "RESPHE"    = "History of respiratory disease",
+  "MCQ160L"   = "History of liver disease",
+  "DR1TKCAL"  = "Total calorie intake",
+  "DIQ010"    = "History of diabetes",
+  "Age > 18"  = "Age > 18", "Age > 45" = "Age > 45", "Age > 65" = "Age > 65",
+  "Male"      = "Males Only", "Female" = "Females Only", "Both" = "Both Sexes",
+  "Death: Excluded"     = "Exclude early deaths (<=3yr)",
+  "Death: Not Excluded" = "Include all deaths",
+  "CRP: Excluded"       = "Exclude high CRP (<=10 mg/L)",
+  "CRP: Not Excluded"   = "Include all CRP values",
+  "---GAP_DEMOG_EXCL---" = " ", "---GAP_EXCL_COV---" = "  "
+)
+
+control_inclusions_df <- plot_specs_df %>%
+  select(spec_id, controls) %>%
+  mutate(controls = ifelse(is.na(controls) | controls == "", "NO_CONTROL", controls)) %>%
+  mutate(var = str_split(controls, "\\s*\\+\\s*")) %>%
+  unnest(var) %>%
+  filter(var != "NO_CONTROL") %>%
+  select(spec_id, var)
+
+subset_inclusions_df <- plot_specs_df %>%
+  select(-controls) %>%
+  pivot_longer(cols = -spec_id, names_to = "filter_type", values_to = "var") %>%
+  select(spec_id, var)
+
+master_inclusions_df <- bind_rows(
+  control_inclusions_df,
+  subset_inclusions_df
+) %>%
+  distinct() %>%
+  mutate(included = TRUE)
+
+estimates_df <- res_df %>%
+  filter(!is.na(estimate)) %>%
+  transmute(
+    spec_id,
+    estimate_HR  = exp(estimate),
+    conf.low_HR  = exp(conf.low),
+    conf.high_HR = exp(conf.high)
+  ) %>%
+  arrange(estimate_HR) %>%
+  mutate(
+    is_significant = (conf.low_HR > 1 | conf.high_HR < 1),
+    spec_order     = factor(spec_id, levels = spec_id)
+  )
+
+spec_grid_final <- expand_grid(spec_id = estimates_df$spec_id, var = all_vars_to_plot) %>%
+  left_join(master_inclusions_df, by = c("spec_id", "var")) %>%
+  mutate(included = if_else(is.na(included), FALSE, included)) %>%
+  left_join(estimates_df %>% select(spec_id, spec_order), by = "spec_id") %>%
+  mutate(
+    var_label = var_labels[var],
+    var_label = factor(var_label, levels = rev(var_labels[all_vars_to_plot]))
+  ) %>%
+  filter(!is.na(spec_order) & !is.na(var_label))
+
+primary_color      <- col_nonsignif
+significance_color <- col_signif
+secondary_color    <- col_ci
+
+#####plot curve#####
+
+p_est <- ggplot(estimates_df, aes(x = spec_order, y = estimate_HR)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black") +
+  geom_errorbar(aes(ymin = conf.low_HR, ymax = conf.high_HR),
+                width = 0, size = 0.3, color = secondary_color) +
+  geom_point(aes(color = is_significant), size = 1.2) +
+  scale_color_manual(
+    values = c("TRUE" = significance_color, "FALSE" = primary_color),
+    guide  = "none"
+  ) +
+  theme_bw(base_size = 12, base_family = "sans") +
+  labs(x = NULL, y = NULL) +
+  coord_cartesian(ylim = c(0.8, 1.5)) +
+  theme(
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+p_grid <- ggplot(spec_grid_final, aes(x = spec_order, y = var_label)) +
+  geom_tile(fill = "white") +
+  geom_point(data = filter(spec_grid_final, included == TRUE),
+             shape = "|", size = 2, color = "black") +
+  theme_bw(base_size = 12, base_family = "sans") +
+  labs(x = NULL, y = NULL) +
+  theme(
+    panel.grid      = element_blank(),
+    axis.text.x     = element_blank(),
+    axis.ticks.x    = element_blank(),
+    legend.position = "none"
+  )
+
+final_plot <- p_est / p_grid +
+  plot_layout(heights = c(1, 2)) +
+  plot_annotation(
+    title   = NULL,
+    caption = NULL,
+    theme = theme(
+      plot.title   = element_text(color = "black", family = "sans"),
+      plot.caption = element_text(color = "black", family = "sans")
+    )
+  )
+
+print(final_plot)
